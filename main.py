@@ -40,6 +40,7 @@ def ensure_bootstrap(character_count: int = 24, posts_per_character: int = 2):
     created_posts = 0
     created_stories = 0
 
+    # If we've already bootstrapped a bit, don't recreate — return counts quickly
     if existing >= 5:
         return BootstrapResponse(characters=existing, posts=db["post"].count_documents({}), stories=db["story"].count_documents({}))
 
@@ -51,10 +52,12 @@ def ensure_bootstrap(character_count: int = 24, posts_per_character: int = 2):
         "travel","food","art","fitness","tech","gaming","fashion","music","photo","nature","design","books","coffee","pets","memes"
     ]
 
-    # Create characters
+    # Create characters (guard against duplicates by username)
     for i in range(character_count):
         name = f"{choice(first_names)} {choice(last_names)}"
         username = (name.split()[0] + str(randint(100, 999))).lower()
+        if db["character"].count_documents({"username": username}) > 0:
+            continue
         char = Character(
             username=username,
             name=name,
@@ -97,9 +100,9 @@ def ensure_bootstrap(character_count: int = 24, posts_per_character: int = 2):
             created_stories += 1
 
     return BootstrapResponse(
-        characters=created_chars,
-        posts=created_posts,
-        stories=created_stories,
+        characters=db["character"].count_documents({}),
+        posts=db["post"].count_documents({}),
+        stories=db["story"].count_documents({}),
     )
 
 
@@ -118,9 +121,6 @@ def get_feed(limit: int = 25):
     try:
         posts = list(db["post"].find({}).sort("created_at", -1).limit(limit))
         # hydrate with author basic info
-        author_ids = [p.get("author_id") for p in posts]
-        characters = {str(c.get("_id")): c for c in db["character"].find({"_id": {"$in": [db["character"].database.client.get_default_database().codec_options.document_class()._id if False else None]}})}
-        # fallback simple map
         char_map = {str(c.get("_id")): c for c in db["character"].find({})}
         for p in posts:
             aid = p.get("author_id")
@@ -168,6 +168,80 @@ def like_post(post_id: str):
         return jsonable_encoder(post)
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+
+# ---- Profile Endpoints ----
+
+def ensure_user() -> dict:
+    """Ensure a single human user exists and return it."""
+    if db is None:
+        raise HTTPException(status_code=500, detail="Database not configured")
+    user = db["user"].find_one({})
+    if user:
+        return user
+    u = User(
+        username="you",
+        name="You",
+        bio="Just exploring the AI universe",
+        avatar_url="https://i.pravatar.cc/150?img=5",
+    )
+    create_document("user", u)
+    return db["user"].find_one({})
+
+
+@app.get("/api/me")
+def get_me():
+    """Return the human user profile with a small set of their posts (if any)."""
+    user = ensure_user()
+    posts = list(db["post"].find({"author_type": "user", "author_id": str(user.get("_id"))}).sort("created_at", -1).limit(30))
+    return jsonable_encoder({
+        "user": user,
+        "posts": posts,
+        "stats": {
+            "posts": len(posts),
+            "followers": 120,
+            "following": 180,
+        }
+    })
+
+
+@app.get("/api/user/{username}")
+def get_user_or_character(username: str):
+    """Return profile info and posts for a given username (user or character)."""
+    # Look in user
+    entity = db["user"].find_one({"username": username})
+    entity_type = "user"
+    if entity is None:
+        entity = db["character"].find_one({"username": username})
+        entity_type = "character"
+    if entity is None:
+        raise HTTPException(status_code=404, detail="Profile not found")
+
+    posts = list(db["post"].find({
+        "author_type": entity_type,
+        "author_id": str(entity.get("_id"))
+    }).sort("created_at", -1).limit(60))
+
+    # hydrate author reference on posts for frontend reuse
+    for p in posts:
+        p["author"] = {
+            "username": entity.get("username"),
+            "name": entity.get("name"),
+            "avatar_url": entity.get("avatar_url"),
+        }
+
+    stats = {
+        "posts": len(posts),
+        "followers": entity.get("followers", 1000) if entity_type == "character" else 120,
+        "following": entity.get("following", 250) if entity_type == "character" else 180,
+    }
+
+    return jsonable_encoder({
+        "type": entity_type,
+        "profile": entity,
+        "posts": posts,
+        "stats": stats,
+    })
 
 
 @app.get("/test")
