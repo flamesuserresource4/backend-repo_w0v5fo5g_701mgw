@@ -1,48 +1,85 @@
 """
-Database Schemas
+AIgram Database Schemas
 
-Define your MongoDB collection schemas here using Pydantic models.
-These schemas are used for data validation in your application.
+Each Pydantic model corresponds to a MongoDB collection. The collection name is the lowercase of the class name.
 
-Each Pydantic model represents a collection in your database.
-Model name is converted to lowercase for the collection name:
-- User -> "user" collection
-- Product -> "product" collection
-- BlogPost -> "blogs" collection
+Collections used:
+- User: The single human user of the app
+- Character: AI-generated personas
+- Post: Feed posts (images/videos) created by Characters or User
+- Story: 24h ephemeral stories
+- Reel: Short vertical videos
+- Comment: Comments on posts
+- Conversation: DM conversations
+- Message: Messages inside a conversation
+- Notification: Basic engagement notifications
 """
 
 from pydantic import BaseModel, Field
-from typing import Optional
-
-# Example schemas (replace with your own):
+from typing import List, Optional, Literal
 
 class User(BaseModel):
-    """
-    Users collection schema
-    Collection name: "user" (lowercase of class name)
-    """
-    name: str = Field(..., description="Full name")
-    email: str = Field(..., description="Email address")
-    address: str = Field(..., description="Address")
-    age: Optional[int] = Field(None, ge=0, le=120, description="Age in years")
-    is_active: bool = Field(True, description="Whether user is active")
+    username: str = Field(..., description="Unique username for the human user")
+    name: Optional[str] = Field(None, description="Display name")
+    bio: Optional[str] = Field(None, description="Profile bio")
+    avatar_url: Optional[str] = Field(None, description="Profile picture URL")
 
-class Product(BaseModel):
-    """
-    Products collection schema
-    Collection name: "product" (lowercase of class name)
-    """
-    title: str = Field(..., description="Product title")
-    description: Optional[str] = Field(None, description="Product description")
-    price: float = Field(..., ge=0, description="Price in dollars")
-    category: str = Field(..., description="Product category")
-    in_stock: bool = Field(True, description="Whether product is in stock")
+class Character(BaseModel):
+    username: str = Field(..., description="Unique handle for the AI character")
+    name: str = Field(..., description="Display name")
+    bio: Optional[str] = Field(None, description="Short bio")
+    avatar_url: Optional[str] = Field(None, description="Avatar URL")
+    interests: List[str] = Field(default_factory=list, description="Interest tags for personalization")
+    followers: int = Field(0, ge=0)
+    following: int = Field(0, ge=0)
 
-# Add your own schemas here:
-# --------------------------------------------------
+PostType = Literal["image", "video"]
 
-# Note: The Flames database viewer will automatically:
-# 1. Read these schemas from GET /schema endpoint
-# 2. Use them for document validation when creating/editing
-# 3. Handle all database operations (CRUD) directly
-# 4. You don't need to create any database endpoints!
+class Post(BaseModel):
+    author_type: Literal["character", "user"] = Field("character")
+    author_id: str = Field(..., description="ID of the author document")
+    type: PostType = Field("image")
+    media_url: str = Field(..., description="URL of the image or video")
+    caption: Optional[str] = Field(None)
+    hashtags: List[str] = Field(default_factory=list)
+    like_count: int = Field(0, ge=0)
+    comment_count: int = Field(0, ge=0)
+
+class Story(BaseModel):
+    author_type: Literal["character", "user"] = Field("character")
+    author_id: str
+    media_url: str
+    text_overlay: Optional[str] = None
+    expires_at: Optional[str] = Field(None, description="ISO timestamp when the story expires")
+
+class Reel(BaseModel):
+    author_type: Literal["character", "user"] = Field("character")
+    author_id: str
+    media_url: str
+    caption: Optional[str] = None
+    like_count: int = 0
+    comment_count: int = 0
+
+class Comment(BaseModel):
+    post_id: str
+    author_type: Literal["character", "user"] = Field("character")
+    author_id: str
+    text: str
+
+class Conversation(BaseModel):
+    participant_ids: List[str] = Field(..., description="IDs (user and characters) in the convo; includes the user id")
+
+class Message(BaseModel):
+    conversation_id: str
+    author_type: Literal["character", "user"] = Field("character")
+    author_id: str
+    text: Optional[str] = None
+    media_url: Optional[str] = None
+
+class Notification(BaseModel):
+    user_id: str
+    type: Literal["like", "comment", "follow"]
+    actor_id: str
+    actor_type: Literal["character", "user"] = Field("character")
+    post_id: Optional[str] = None
+    message: Optional[str] = None
